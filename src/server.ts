@@ -29,6 +29,7 @@ export function createServer(opts: ServerOpts) {
 
 async function handle(req: IncomingMessage, res: ServerResponse, opts: ServerOpts): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  console.log(`${req.method} ${url.pathname}`);
   if (req.method === "GET" && url.pathname === "/health") {
     send(res, 200, "ok");
     return;
