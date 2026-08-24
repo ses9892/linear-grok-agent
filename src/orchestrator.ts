@@ -5,6 +5,7 @@ import { parseAgentMarker } from "./marker.ts";
 import type { GrokPort, LinearPort } from "./ports.ts";
 import type { Store } from "./store.ts";
 import type { Slot } from "./slot.ts";
+import { createThoughtBuffer } from "./thoughtBuffer.ts";
 import { ensureWorktree, type GitRunner } from "./worktree.ts";
 
 export type HandleWebhookOpts = {
@@ -121,17 +122,24 @@ async function runOneIssue(opts: HandleWebhookOpts, issueId: string): Promise<vo
     try {
       const prompt = store.takeQueuedPrompt(issueId);
       const latest = store.getByIssueId(issueId)!;
+      const thoughts = createThoughtBuffer({
+        emit: (text) => {
+          void linear.thought(latest.linearAgentSessionId, text);
+        },
+      });
       const result = await grok.run({
         prompt: buildIssuePrompt({ promptContext: prompt, userText: "" }),
         cwd: wt.worktreePath,
         resumeSessionId: latest.grokSessionId ?? undefined,
         onThought: (text) => {
-          void linear.thought(latest.linearAgentSessionId, text);
+          thoughts.push(text);
         },
         onAction: (title) => {
+          thoughts.flush();
           void linear.action(latest.linearAgentSessionId, title, "");
         },
       });
+      thoughts.flush();
       const after = store.getByIssueId(issueId)!;
       store.upsert({
         ...after,
