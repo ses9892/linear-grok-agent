@@ -1,0 +1,8 @@
+linear_client_id = "replace"
+linear_client_secret = "replace"
+linear_webhook_secret = "replace"
+app_user_id = "replace"
+repo_path = "/Users/jangjinho/SeedAi/SeedAI_SiteKeeper/SeedSiteKeeper"
+bind_host = "127.0.0.1"
+bind_port = 8787
+public_base_url = "https://replace.trycloudflare.com"
