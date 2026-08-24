@@ -16,6 +16,10 @@ export function grokArgv(opts: {
     "--yolo",
     "--output-format",
     "streaming-json",
+    "--deny",
+    "MCPTool(linear__*)",
+    "--deny",
+    "mcp__linear",
   ];
   if (opts.resumeSessionId) {
     argv.push("--resume", opts.resumeSessionId);
@@ -64,6 +68,9 @@ export function buildIssuePrompt(opts: { promptContext: string; userText: string
     "Only modify SeedSiteKeeper at the worktree cwd. Do not touch other repositories.",
     "Follow AGENTS.md and DEV_PROCESS.md in the worktree.",
     "Do not change the Linear assignee. You are the delegate, not the owner.",
+    "Never use Linear MCP tools (save_comment, save_issue, list_issues, etc.).",
+    "Never post Linear comments yourself. The wrapper posts to Linear as the Grok app user.",
+    "Put the user-visible answer only in the final {\"agent\":...} JSON marker.",
     "",
     "Linear promptContext:",
     opts.promptContext,

@@ -9,6 +9,7 @@ test("argv always includes grok-4.6 high yolo streaming-json", () => {
   assert.ok(argv.includes("high"));
   assert.ok(argv.includes("--yolo"));
   assert.ok(argv.includes("streaming-json"));
+  assert.ok(argv.includes("MCPTool(linear__*)"));
   assert.equal(argv.includes("--resume"), false);
 });
 
@@ -46,4 +47,5 @@ test("buildIssuePrompt requires elicitation marker and seed path", () => {
   assert.match(p, /답: 로그인/);
   assert.match(p, /elicitation/);
   assert.match(p, /DEV_PROCESS/);
+  assert.match(p, /Never use Linear MCP/);
 });
