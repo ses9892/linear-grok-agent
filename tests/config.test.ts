@@ -15,6 +15,7 @@ public_base_url = "https://example.trycloudflare.com"
 `);
   assert.equal(cfg.repoPath, "/Users/jangjinho/SeedAi/SeedAI_SiteKeeper/SeedSiteKeeper");
   assert.equal(cfg.bindPort, 8787);
+  assert.equal(cfg.maxRunning, 5);
 });
 
 test("loadConfig throws when repo_path missing", () => {

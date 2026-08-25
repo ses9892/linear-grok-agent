@@ -224,13 +224,14 @@ Cloudflare Tunnel은 Linear(클라우드)가 맥(`localhost`)을 찾아오게 �
 ## 동작 규칙
 
 - 모델 `grok-4.6`, effort `high`
-- 동시에 `running` 이슈 1개. 나머지는 FIFO
+- 동시에 `running` 이슈 최대 5개 (`max_running`). 그 이후는 FIFO 대기. 이슈당 grok는 1개
 - 질문이면 Linear elicitation 후 대기. 같은 이슈 답장/`@Grok`으로 `--resume`
 - 완료 후 다시 `@Grok`이면 같은 브랜치에서 후속
 - 시작 시 Linear GraphQL로 이슈 제목/본문/상태/댓글을 읽어 프롬프트에 넣음. 웹훅 `promptContext`가 비어도 본문으로 작업함
 - `uploads.linear.app` 이미지는 에이전트 `issue-images/<이슈>/`에 받아 절대 경로로 프롬프트에 넣음 (worktree에 넣지 않음)
 - Linear 쓰기는 Grok 앱 토큰 헬퍼 `bin/linear-as-grok` (댓글/설명/제목/상태). Grok CLI의 Linear MCP는 `--deny` — MCP는 사람 계정으로 쓰기 때문
 - Linear 세션 action에 도구 경로/커맨드 파라미터를 같이 올림
+- Linear Stop 요청(`signal: stop`)은 grok를 끊고 세션을 닫음. thought만 올리면 Working에 남음
 - thought는 단어 단위가 아니라 문장/버퍼로 모아서 올림
 
 ## 테스트

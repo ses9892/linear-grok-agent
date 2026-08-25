@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { createGrokPort } from "./spawnGrok.ts";
 import { createLinearPort, exchangeOAuthCode, fetchIssueSnapshot } from "./linear.ts";
-import { handleWebhook } from "./orchestrator.ts";
+import { handleWebhook, pumpSlots } from "./orchestrator.ts";
 import { reclaimZombies } from "./reclaim.ts";
 import { createServer } from "./server.ts";
 import { createSlot } from "./slot.ts";
@@ -30,7 +30,7 @@ function alive(pid: number): boolean {
 async function main(): Promise<void> {
   const cfg = loadConfig(readFileSync(join(root, "config.toml"), "utf8"));
   const store = openStore(join(root, "state.sqlite"));
-  const slot = createSlot();
+  const slot = createSlot(cfg.maxRunning);
   const tokenPath = join(root, "token.json");
   const grok = createGrokPort();
   const lockWorktree = (worktreePath: string) =>
@@ -82,16 +82,33 @@ async function main(): Promise<void> {
         token,
         loadIssue: (issueId) => fetchIssueSnapshot(token, issueId),
       });
-      if (result.running) {
-        await result.running;
-      }
+      void result.running?.catch((err) => {
+        console.error("grok run failed", err);
+      });
     },
   });
 
   if (existsSync(tokenPath)) {
     const token = (JSON.parse(readFileSync(tokenPath, "utf8")) as { access_token: string })
       .access_token;
-    await reclaimZombies(store, createLinearPort(token), alive);
+    const linear = createLinearPort(token);
+    await reclaimZombies(store, linear, alive);
+    for (const rec of store.listByStatus("queued")) {
+      slot.enqueue(rec.issueId);
+    }
+    pumpSlots({
+      store,
+      slot,
+      linear,
+      grok,
+      agentRoot: root,
+      repoPath: cfg.repoPath,
+      git,
+      exists: existsSync,
+      lockWorktree,
+      token,
+      loadIssue: (issueId) => fetchIssueSnapshot(token, issueId),
+    });
   }
 
   server.listen(cfg.bindPort, cfg.bindHost, () => {

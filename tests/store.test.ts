@@ -45,6 +45,14 @@ test("append and take queued prompt", () => {
   assert.equal(store.takeQueuedPrompt("iss-1"), "");
 });
 
+test("listByStatus returns queued", () => {
+  const db = join(mkdtempSync(join(tmpdir(), "lg-")), "s.sqlite");
+  const store = openStore(db);
+  store.upsert(rec());
+  store.upsert(rec({ issueId: "iss-2", status: "queued", pid: null }));
+  assert.equal(store.listByStatus("queued").length, 1);
+});
+
 test("listRunning returns only running", () => {
   const db = join(mkdtempSync(join(tmpdir(), "lg-")), "s.sqlite");
   const store = openStore(db);

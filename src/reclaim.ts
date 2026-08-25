@@ -7,14 +7,17 @@ export async function reclaimZombies(
   alive: (pid: number) => boolean,
 ): Promise<void> {
   for (const rec of store.listRunning()) {
-    if (rec.pid === null || !alive(rec.pid)) {
-      store.upsert({
-        ...rec,
-        status: "error",
-        pid: null,
-        updatedAt: Date.now(),
-      });
-      await linear.error(rec.linearAgentSessionId, "맥이 잠겨 중단됨. @Grok으로 재개");
+    if (rec.pid !== null && alive(rec.pid)) continue;
+    if (rec.pid === null) {
+      store.upsert({ ...rec, status: "queued", pid: null, updatedAt: Date.now() });
+      continue;
     }
+    store.upsert({
+      ...rec,
+      status: "error",
+      pid: null,
+      updatedAt: Date.now(),
+    });
+    await linear.error(rec.linearAgentSessionId, "맥이 잠겨 중단됨. @Grok으로 재개");
   }
 }

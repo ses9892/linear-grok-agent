@@ -47,10 +47,9 @@ type RunCall = {
   env?: Record<string, string>;
 };
 
-function setup() {
+function setup(slot = createSlot(5)) {
   const db = join(mkdtempSync(join(tmpdir(), "lg-")), "s.sqlite");
   const store = openStore(db);
-  const slot = createSlot();
   const thoughts: string[] = [];
   const errors: string[] = [];
   const responses: string[] = [];
@@ -80,7 +79,7 @@ function setup() {
       env: opts.env,
     });
     opts.onThought("thinking");
-    return { sessionId: "g-1", text: completeText(), exitCode: 0, pid: 4242 };
+    return { sessionId: "g-1", text: completeText(), exitCode: 0, pid: 4242, aborted: false };
   };
   const grok: GrokPort = {
     run: (opts) => grokImpl(opts),
@@ -134,7 +133,7 @@ test("second created while running queues then resumes", async () => {
       env: opts.env,
     });
     if (runs.length === 1) await firstGate;
-    return { sessionId: "g-1", text: completeText(), exitCode: 0, pid: 1 };
+    return { sessionId: "g-1", text: completeText(), exitCode: 0, pid: 1, aborted: false };
   });
   const r1 = await handleWebhook({ ...ctx, exists: () => false, eventId: "d1", body: createdBody() });
   const r2 = await handleWebhook({ ...ctx, exists: () => false, eventId: "d2", body: createdBody() });
@@ -191,7 +190,7 @@ test("complete then created reuses branch and resumes", async () => {
 });
 
 test("second issue waits in fifo then starts", async () => {
-  const { ctx, runs, thoughts, setGrok } = setup();
+  const { ctx, runs, thoughts, setGrok } = setup(createSlot(1));
   let releaseFirst!: () => void;
   const firstGate = new Promise<void>((r) => {
     releaseFirst = r;
@@ -206,7 +205,7 @@ test("second issue waits in fifo then starts", async () => {
     if (opts.cwd.endsWith("JHJ-1") && runs.filter((r) => r.cwd.endsWith("JHJ-1")).length === 1) {
       await firstGate;
     }
-    return { sessionId: "g-x", text: completeText(), exitCode: 0, pid: 1 };
+    return { sessionId: "g-x", text: completeText(), exitCode: 0, pid: 1, aborted: false };
   });
   const r1 = await handleWebhook({
     ...ctx,
@@ -221,10 +220,13 @@ test("second issue waits in fifo then starts", async () => {
     body: createdBody("iss-2", "JHJ-2"),
   });
   assert.equal(runs.length, 1);
-  assert.ok(thoughts.some((t) => t.includes("JHJ-1") && t.includes("작업 중")));
+  assert.ok(thoughts.some((t) => t.includes("대기열") && t.includes("JHJ-1")));
   releaseFirst();
   await r1.running;
-  await r2.running;
+  const until = Date.now() + 1000;
+  while (!runs.some((r) => r.cwd.endsWith("JHJ-2")) && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
   assert.ok(runs.some((r) => r.cwd.endsWith("JHJ-2")));
 });
 
@@ -232,7 +234,7 @@ test("grok exit 0 without marker is error", async () => {
   const { ctx, store, errors, setGrok } = setup();
   setGrok(async (opts) => {
     opts.onThought("x");
-    return { sessionId: "g-1", text: "no marker here", exitCode: 0, pid: 1 };
+    return { sessionId: "g-1", text: "no marker here", exitCode: 0, pid: 1, aborted: false };
   });
   const result = await handleWebhook({
     ...ctx,
@@ -290,3 +292,127 @@ test("duplicate eventId does not run grok", async () => {
   assert.equal(second.httpNote, "duplicate");
   assert.equal(runs.length, 1);
 });
+
+test("two different issues run in parallel with slot 5", async () => {
+  const { ctx, runs, setGrok } = setup(createSlot(5));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  setGrok(async (opts) => {
+    runs.push({
+      prompt: opts.prompt,
+      cwd: opts.cwd,
+      resumeSessionId: opts.resumeSessionId,
+      env: opts.env,
+    });
+    await gate;
+    return { sessionId: "g-x", text: completeText(), exitCode: 0, pid: 1, aborted: false };
+  });
+  const r1 = await handleWebhook({
+    ...ctx,
+    exists: () => false,
+    eventId: "p1",
+    body: createdBody("iss-1", "JHJ-1"),
+  });
+  const r2 = await handleWebhook({
+    ...ctx,
+    exists: () => false,
+    eventId: "p2",
+    body: createdBody("iss-2", "JHJ-2"),
+  });
+  assert.equal(runs.length, 2);
+  release();
+  await r1.running;
+  await r2.running;
+});
+
+test("sixth issue queues when 5 are running", async () => {
+  const { ctx, runs, thoughts, store, setGrok } = setup(createSlot(5));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  setGrok(async (opts) => {
+    runs.push({
+      prompt: opts.prompt,
+      cwd: opts.cwd,
+      resumeSessionId: opts.resumeSessionId,
+      env: opts.env,
+    });
+    await gate;
+    return { sessionId: "g-x", text: completeText(), exitCode: 0, pid: 1, aborted: false };
+  });
+  const results = [];
+  for (let i = 1; i <= 6; i++) {
+    results.push(
+      await handleWebhook({
+        ...ctx,
+        exists: () => false,
+        eventId: `n${i}`,
+        body: createdBody(`iss-${i}`, `JHJ-${i}`),
+      }),
+    );
+  }
+  assert.equal(runs.length, 5);
+  assert.equal(store.getByIssueId("iss-6")?.status, "queued");
+  assert.ok(thoughts.some((t) => t.includes("대기열") && t.includes("최대 5")));
+  release();
+  await Promise.all(results.map((r) => r.running));
+  assert.ok(runs.some((r) => r.cwd.endsWith("JHJ-6")));
+});
+
+test("stop signal closes a queued session", async () => {
+  const { ctx, responses, runs, store, setGrok } = setup(createSlot(1));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  setGrok(async (opts) => {
+    runs.push({
+      prompt: opts.prompt,
+      cwd: opts.cwd,
+      resumeSessionId: opts.resumeSessionId,
+      env: opts.env,
+    });
+    await gate;
+    return {
+      sessionId: "g-x",
+      text: completeText(),
+      exitCode: 0,
+      pid: 1,
+      aborted: Boolean(opts.signal?.aborted),
+    };
+  });
+  const r1 = await handleWebhook({
+    ...ctx,
+    exists: () => false,
+    eventId: "z1",
+    body: createdBody("iss-1", "JHJ-1"),
+  });
+  await handleWebhook({
+    ...ctx,
+    exists: () => false,
+    eventId: "z2",
+    body: createdBody("iss-2", "JHJ-2"),
+  });
+  await handleWebhook({
+    ...ctx,
+    exists: () => false,
+    eventId: "z3",
+    body: {
+      type: "AgentSessionEvent",
+      action: "prompted",
+      agentSession: {
+        id: "ses-1",
+        issue: { id: "iss-2", identifier: "JHJ-2" },
+      },
+      agentActivity: { signal: "stop", body: "" },
+    },
+  });
+  assert.ok(responses.some((r) => r.includes("중단")));
+  assert.equal(store.getByIssueId("iss-2")?.status, "error");
+  release();
+  await r1.running;
+});
+

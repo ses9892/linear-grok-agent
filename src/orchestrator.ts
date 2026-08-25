@@ -11,7 +11,7 @@ import type { Slot } from "./slot.ts";
 import { createThoughtBuffer } from "./thoughtBuffer.ts";
 import { ensureWorktree, type GitRunner } from "./worktree.ts";
 
-export type HandleWebhookOpts = {
+export type RunnerOpts = {
   store: Store;
   slot: Slot;
   linear: LinearPort;
@@ -21,13 +21,45 @@ export type HandleWebhookOpts = {
   git: GitRunner;
   exists: (path: string) => boolean;
   lockWorktree: (worktreePath: string) => () => void;
-  eventId: string;
-  body: unknown;
   token?: string;
   loadIssue?: (issueId: string) => Promise<IssueSnapshot>;
 };
 
+export type HandleWebhookOpts = RunnerOpts & {
+  eventId: string;
+  body: unknown;
+};
+
 const webhookContextByIssue = new Map<string, string>();
+const abortByIssue = new Map<string, AbortController>();
+
+function helperBin(agentRoot: string): string {
+  return join(agentRoot, "bin/linear-as-grok");
+}
+
+function runningNames(opts: RunnerOpts): string {
+  return opts.slot
+    .holders()
+    .map((id) => opts.store.getByIssueId(id)?.issueIdentifier ?? id)
+    .join(", ");
+}
+
+export function pumpSlots(opts: RunnerOpts): void {
+  while (opts.slot.holders().length < opts.slot.limit) {
+    const next = opts.slot.dequeue();
+    if (!next) return;
+    if (!opts.slot.tryAcquire(next)) {
+      opts.slot.enqueue(next);
+      return;
+    }
+    const nextRec = opts.store.getByIssueId(next);
+    void runLoop(opts, next, nextRec?.queuedPrompt ?? webhookContextByIssue.get(next) ?? "").catch(
+      (err) => {
+        console.error("runLoop failed", next, err);
+      },
+    );
+  }
+}
 
 export async function handleWebhook(
   opts: HandleWebhookOpts,
@@ -41,6 +73,23 @@ export async function handleWebhook(
     return { httpNote: "ignored" };
   }
   webhookContextByIssue.set(event.issueId, event.promptContext);
+
+  if (event.stop) {
+    slot.remove(event.issueId);
+    const existing = store.getByIssueId(event.issueId);
+    const running = abortByIssue.get(event.issueId);
+    if (running) {
+      running.abort();
+      return { httpNote: "ok" };
+    }
+    if (existing) {
+      store.upsert({ ...existing, status: "error", pid: null, updatedAt: Date.now() });
+    }
+    await linear.response(event.linearAgentSessionId, "사용자 요청으로 중단했습니다.");
+    slot.release(event.issueId);
+    pumpSlots(opts);
+    return { httpNote: "ok" };
+  }
 
   const existing = store.getByIssueId(event.issueId);
   await linear.thought(
@@ -71,6 +120,17 @@ export async function handleWebhook(
     );
   } else if (decision.kind === "queuePrompt") {
     store.appendQueuedPrompt(event.issueId, decision.text);
+    store.upsert({
+      ...store.getByIssueId(event.issueId)!,
+      linearAgentSessionId: event.linearAgentSessionId,
+      updatedAt: now,
+    });
+    if (existing?.status === "queued") {
+      await linear.thought(
+        event.linearAgentSessionId,
+        `대기열 ${slot.queuePosition(event.issueId) || "대기"}번. 지금 실행 중: ${runningNames(opts) || "없음"} (최대 ${slot.limit})`,
+      );
+    }
     return { httpNote: "ok" };
   } else {
     store.upsert({
@@ -84,11 +144,11 @@ export async function handleWebhook(
 
   if (!slot.tryAcquire(event.issueId)) {
     slot.enqueue(event.issueId);
-    const holder = slot.holder();
-    const holderRec = holder ? store.getByIssueId(holder) : null;
+    const rec = store.getByIssueId(event.issueId)!;
+    store.upsert({ ...rec, status: "queued", pid: null, updatedAt: Date.now() });
     await linear.thought(
       event.linearAgentSessionId,
-      `지금 ${holderRec?.issueIdentifier ?? holder ?? "다른 이슈"} 작업 중`,
+      `대기열 ${slot.queuePosition(event.issueId)}번. 지금 실행 중: ${runningNames(opts) || "없음"} (최대 ${slot.limit})`,
     );
     return { httpNote: "ok" };
   }
@@ -98,7 +158,7 @@ export async function handleWebhook(
 }
 
 async function runLoop(
-  opts: HandleWebhookOpts,
+  opts: RunnerOpts,
   issueId: string,
   fallbackContext: string,
 ): Promise<void> {
@@ -106,20 +166,12 @@ async function runLoop(
     await runOneIssue(opts, issueId, fallbackContext);
   } finally {
     opts.slot.release(issueId);
-    const next = opts.slot.dequeue();
-    if (next && opts.slot.tryAcquire(next)) {
-      const nextRec = opts.store.getByIssueId(next);
-      await runLoop(opts, next, nextRec?.queuedPrompt ?? fallbackContext);
-    }
+    pumpSlots(opts);
   }
 }
 
-function helperBin(agentRoot: string): string {
-  return join(agentRoot, "bin/linear-as-grok");
-}
-
 async function runOneIssue(
-  opts: HandleWebhookOpts,
+  opts: RunnerOpts,
   issueId: string,
   fallbackContext: string,
 ): Promise<void> {
@@ -143,6 +195,8 @@ async function runOneIssue(
       updatedAt: Date.now(),
     });
     const unlock = lockWorktree(wt.worktreePath);
+    const ac = new AbortController();
+    abortByIssue.set(issueId, ac);
     try {
       const queued = store.takeQueuedPrompt(issueId);
       const latest = store.getByIssueId(issueId)!;
@@ -198,6 +252,11 @@ async function runOneIssue(
         }),
         cwd: wt.worktreePath,
         resumeSessionId: latest.grokSessionId ?? undefined,
+        signal: ac.signal,
+        onStart: (pid) => {
+          const cur = store.getByIssueId(issueId);
+          if (cur) store.upsert({ ...cur, pid, updatedAt: Date.now() });
+        },
         onThought: (text) => {
           thoughts.push(text);
         },
@@ -214,6 +273,12 @@ async function runOneIssue(
           : undefined,
       });
       thoughts.flush();
+      if (result.aborted) {
+        const current = store.getByIssueId(issueId)!;
+        store.upsert({ ...current, status: "error", pid: null, updatedAt: Date.now() });
+        await linear.response(current.linearAgentSessionId, "사용자 요청으로 중단했습니다.");
+        return;
+      }
       const after = store.getByIssueId(issueId)!;
       store.upsert({
         ...after,
@@ -258,6 +323,7 @@ async function runOneIssue(
       await linear.error(current.linearAgentSessionId, marker.body);
       return;
     } finally {
+      abortByIssue.delete(issueId);
       unlock();
     }
   }

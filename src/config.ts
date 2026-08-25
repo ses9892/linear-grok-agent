@@ -9,6 +9,7 @@ export type AgentConfig = {
   bindHost: string;
   bindPort: number;
   publicBaseUrl: string;
+  maxRunning: number;
 };
 
 export function loadConfig(tomlText: string): AgentConfig {
@@ -33,6 +34,16 @@ export function loadConfig(tomlText: string): AgentConfig {
   if (typeof bindPort !== "number") {
     missing.push("bind_port");
   }
+  const maxRunningRaw = obj.max_running;
+  const maxRunning =
+    maxRunningRaw === undefined || maxRunningRaw === null
+      ? 5
+      : typeof maxRunningRaw === "number"
+        ? maxRunningRaw
+        : Number.NaN;
+  if (!Number.isInteger(maxRunning) || maxRunning < 1) {
+    missing.push("max_running");
+  }
   if (missing.length > 0) {
     throw new Error(`missing config key ${missing.join(", ")}`);
   }
@@ -45,5 +56,6 @@ export function loadConfig(tomlText: string): AgentConfig {
     bindHost,
     bindPort: bindPort as number,
     publicBaseUrl,
+    maxRunning,
   };
 }

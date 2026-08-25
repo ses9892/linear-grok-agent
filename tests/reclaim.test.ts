@@ -38,6 +38,16 @@ function fakeLinear() {
   return { linear, errors };
 }
 
+test("reclaim: running pid null becomes queued", async () => {
+  const db = join(mkdtempSync(join(tmpdir(), "lg-")), "s.sqlite");
+  const store = openStore(db);
+  store.upsert(rec({ pid: null }));
+  const { linear, errors } = fakeLinear();
+  await reclaimZombies(store, linear, () => false);
+  assert.equal(store.getByIssueId("iss-1")?.status, "queued");
+  assert.equal(errors.length, 0);
+});
+
 test("reclaim: running pid 999, alive false → error", async () => {
   const db = join(mkdtempSync(join(tmpdir(), "lg-")), "s.sqlite");
   const store = openStore(db);

@@ -15,7 +15,7 @@ export function decide(record: IssueRecord | null, event: AgentEvent): Decision 
     return { kind: "start" };
   }
   const text = decisionText(event);
-  if (record.status === "running") {
+  if (record.status === "running" || record.status === "queued") {
     return { kind: "queuePrompt", text };
   }
   return { kind: "resume", text };

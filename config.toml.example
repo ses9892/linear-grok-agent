@@ -6,3 +6,4 @@ repo_path = "/absolute/path/to/the/git/repo/you-want-grok-to-edit"
 bind_host = "127.0.0.1"
 bind_port = 8787
 public_base_url = "https://grokbot.win"
+max_running = 5

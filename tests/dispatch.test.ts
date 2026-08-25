@@ -24,6 +24,22 @@ test("parseAgentSessionEvent reads created payload", () => {
   assert.equal(event?.userText, "");
 });
 
+test("parseAgentSessionEvent reads stop signal", () => {
+  const event = parseAgentSessionEvent(
+    {
+      type: "AgentSessionEvent",
+      action: "prompted",
+      agentSession: {
+        id: "ses-1",
+        issue: { id: "iss-1", identifier: "JHJ-1" },
+      },
+      agentActivity: { signal: "stop", body: "" },
+    },
+    "deliv-stop",
+  );
+  assert.equal(event?.stop, true);
+});
+
 test("parseAgentSessionEvent reads prompted body", () => {
   const event = parseAgentSessionEvent(
     {
@@ -94,6 +110,10 @@ const event = {
   linearAgentSessionId: "ses-1",
   promptContext: "CTX",
   userText: "",
+  issueTitle: "",
+  issueDescription: "",
+  issueState: "",
+  stop: false,
 };
 
 test("decide start when no record", () => {
@@ -105,6 +125,10 @@ test("decide queuePrompt when running", () => {
     kind: "queuePrompt",
     text: "more",
   });
+});
+
+test("decide queuePrompt when queued for a slot", () => {
+  assert.equal(decide(rec({ status: "queued" }), { ...event, userText: "more" }).kind, "queuePrompt");
 });
 
 test("decide resume for awaiting complete and error", () => {

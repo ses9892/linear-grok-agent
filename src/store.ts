@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-export type IssueStatus = "running" | "awaiting_input" | "complete" | "error";
+export type IssueStatus = "running" | "queued" | "awaiting_input" | "complete" | "error";
 
 export type IssueRecord = {
   issueId: string;
@@ -50,6 +50,7 @@ export type Store = {
   takeQueuedPrompt(issueId: string): string;
   markEventProcessed(eventId: string): boolean;
   listRunning(): IssueRecord[];
+  listByStatus(status: IssueStatus): IssueRecord[];
 };
 
 export function openStore(dbPath: string): Store {
@@ -107,6 +108,7 @@ export function openStore(dbPath: string): Store {
   );
   const insertEvent = db.prepare("INSERT INTO processed_event (event_id) VALUES (?)");
   const listRunningStmt = db.prepare("SELECT * FROM issue WHERE status = 'running'");
+  const listByStatusStmt = db.prepare("SELECT * FROM issue WHERE status = ?");
 
   return {
     getByIssueId(issueId) {
@@ -139,6 +141,9 @@ export function openStore(dbPath: string): Store {
     },
     listRunning() {
       return (listRunningStmt.all() as IssueRow[]).map(toRecord);
+    },
+    listByStatus(status) {
+      return (listByStatusStmt.all(status) as IssueRow[]).map(toRecord);
     },
   };
 }

@@ -17,6 +17,18 @@ export function createGrokPort(): GrokPort {
         env: { ...process.env, ...opts.env },
       });
       const pid = child.pid ?? 0;
+      opts.onStart?.(pid);
+      const kill = () => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          /* ignore */
+        }
+      };
+      if (opts.signal) {
+        if (opts.signal.aborted) kill();
+        else opts.signal.addEventListener("abort", kill, { once: true });
+      }
       const lines: string[] = [];
       const rl = createInterface({ input: child.stdout });
       for await (const line of rl) {
@@ -33,7 +45,13 @@ export function createGrokPort(): GrokPort {
         onThought() {},
         onAction() {},
       });
-      return { sessionId, text, exitCode, pid };
+      return {
+        sessionId,
+        text,
+        exitCode,
+        pid,
+        aborted: Boolean(opts.signal?.aborted),
+      };
     },
   };
 }

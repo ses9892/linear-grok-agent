@@ -9,6 +9,7 @@ export type AgentEvent = {
   issueTitle: string;
   issueDescription: string;
   issueState: string;
+  stop: boolean;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -86,6 +87,7 @@ export function parseAgentSessionEvent(body: unknown, eventId: string): AgentEve
   });
   const activity = asRecord(root.agentActivity);
   const userText = activity && typeof activity.body === "string" ? activity.body : "";
+  const stop = str(activity?.signal) === "stop";
   return {
     action,
     eventId,
@@ -97,5 +99,6 @@ export function parseAgentSessionEvent(body: unknown, eventId: string): AgentEve
     issueTitle,
     issueDescription,
     issueState,
+    stop,
   };
 }

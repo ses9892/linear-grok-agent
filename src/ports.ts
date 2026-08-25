@@ -14,6 +14,14 @@ export type GrokPort = {
     resumeSessionId?: string;
     onThought(text: string): void;
     onAction(title: string, parameter: string): void;
+    onStart?(pid: number): void;
+    signal?: AbortSignal;
     env?: Record<string, string>;
-  }): Promise<{ sessionId: string | null; text: string; exitCode: number; pid: number }>;
+  }): Promise<{
+    sessionId: string | null;
+    text: string;
+    exitCode: number;
+    pid: number;
+    aborted: boolean;
+  }>;
 };
