@@ -5,3 +5,4 @@ state.sqlite
 worktrees/
 agent.log
 *.log
+.DS_Store
