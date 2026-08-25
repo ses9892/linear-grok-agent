@@ -40,21 +40,14 @@ SeedSiteKeeper 안에서는:
 ./scripts/start-linear-grok-agent.sh
 ```
 
-스크립트가 Cloudflare quick tunnel을 띄우고 `public_base_url`을 맞춘 뒤 수신기(`127.0.0.1:8787`)를 켭니다.
-
-**quick tunnel은 실행마다 공개 URL이 바뀝니다.** 출력된 주소로 Linear Grok 앱의 Webhook URL을 매번 맞추십시오.
+스크립트가 Cloudflare **named tunnel** (`grokbot.win`)과 수신기(`127.0.0.1:8787`)를 켭니다. 주소는 재시작해도 바뀌지 않습니다.
 
 ```
-https://<호스트>.trycloudflare.com/webhook
+https://grokbot.win/webhook
+https://grokbot.win/oauth/callback
 ```
 
-Redirect URI:
-
-```
-https://<호스트>.trycloudflare.com/oauth/callback
-```
-
-이미 수신기와 터널이 살아 있으면 스크립트는 재시작하지 않고 현재 주소만 보여 줍니다. Ctrl+C로 종료합니다.
+이미 살아 있으면 재시작하지 않습니다. Ctrl+C로 종료합니다.
 
 ## Linear 앱 (최초 1회)
 
@@ -89,4 +82,4 @@ npm test
 
 ## 상시 기동
 
-quick tunnel hostname은 재시작마다 바뀝니다. 고정 URL이 필요하면 Cloudflare named tunnel을 쓰고 `launchd/` plist를 맞추십시오.
+고정 주소는 `grokbot.win` named tunnel입니다. 로그인 시 자동 기동은 `launchd/` plist의 터널 명령을 `cloudflared tunnel --config ~/.cloudflared/config.yml run linear-grok` 로 맞추면 됩니다.
