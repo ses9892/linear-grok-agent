@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TSX="$ROOT/node_modules/.bin/tsx"
+if [[ ! -x "$TSX" ]]; then
+  echo "tsx missing in $ROOT; run npm install" >&2
+  exit 1
+fi
+exec "$TSX" "$ROOT/src/linearAsGrok.ts" "$@"

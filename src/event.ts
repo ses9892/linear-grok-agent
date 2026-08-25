@@ -6,6 +6,9 @@ export type AgentEvent = {
   linearAgentSessionId: string;
   promptContext: string;
   userText: string;
+  issueTitle: string;
+  issueDescription: string;
+  issueState: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -15,13 +18,45 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function stateName(issue: Record<string, unknown>): string {
+  const state = asRecord(issue.state);
+  if (state && typeof state.name === "string") return state.name;
+  return str(issue.state);
+}
+
+export function assembleIssueContext(opts: {
+  identifier: string;
+  title?: string;
+  description?: string;
+  state?: string;
+  promptContext?: string;
+  comments?: string;
+}): string {
+  if (opts.promptContext && opts.promptContext.trim().length > 0) {
+    const extra = [
+      opts.title ? `Title: ${opts.title}` : "",
+      opts.state ? `State: ${opts.state}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return extra ? `${extra}\n\n${opts.promptContext.trim()}` : opts.promptContext.trim();
+  }
+  const parts = [
+    `# ${opts.identifier}${opts.title ? ` ${opts.title}` : ""}`,
+    opts.state ? `State: ${opts.state}` : "",
+    opts.description ? `## Description\n${opts.description}` : "",
+    opts.comments ? `## Comments\n${opts.comments}` : "",
+  ].filter((p) => p.length > 0);
+  return parts.join("\n\n");
+}
+
 export function parseAgentSessionEvent(body: unknown, eventId: string): AgentEvent | null {
   const root = asRecord(body);
   if (!root) return null;
-  const type = root.type;
-  if (type !== "AgentSessionEvent" && type !== undefined) {
-    // Some payloads omit type; still require action + agentSession.
-  }
   if (root.type && root.type !== "AgentSessionEvent") {
     return null;
   }
@@ -29,7 +64,7 @@ export function parseAgentSessionEvent(body: unknown, eventId: string): AgentEve
   if (action !== "created" && action !== "prompted") {
     return null;
   }
-  const session = asRecord(root.agentSession);
+  const session = asRecord(root.agentSession) || asRecord(root.data);
   if (!session || typeof session.id !== "string") {
     return null;
   }
@@ -37,7 +72,18 @@ export function parseAgentSessionEvent(body: unknown, eventId: string): AgentEve
   if (!issue || typeof issue.id !== "string" || typeof issue.identifier !== "string") {
     return null;
   }
-  const promptContext = typeof session.promptContext === "string" ? session.promptContext : "";
+  const promptContextRaw =
+    str(session.promptContext) || str(root.promptContext) || str(issue.promptContext);
+  const issueTitle = str(issue.title);
+  const issueDescription = str(issue.description);
+  const issueState = stateName(issue);
+  const promptContext = assembleIssueContext({
+    identifier: issue.identifier,
+    title: issueTitle,
+    description: issueDescription,
+    state: issueState,
+    promptContext: promptContextRaw,
+  });
   const activity = asRecord(root.agentActivity);
   const userText = activity && typeof activity.body === "string" ? activity.body : "";
   return {
@@ -48,5 +94,8 @@ export function parseAgentSessionEvent(body: unknown, eventId: string): AgentEve
     linearAgentSessionId: session.id,
     promptContext,
     userText,
+    issueTitle,
+    issueDescription,
+    issueState,
   };
 }

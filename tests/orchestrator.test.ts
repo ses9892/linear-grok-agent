@@ -44,6 +44,7 @@ type RunCall = {
   prompt: string;
   cwd: string;
   resumeSessionId?: string;
+  env?: Record<string, string>;
 };
 
 function setup() {
@@ -72,7 +73,12 @@ function setup() {
   };
   const runs: RunCall[] = [];
   let grokImpl: GrokPort["run"] = async (opts) => {
-    runs.push({ prompt: opts.prompt, cwd: opts.cwd, resumeSessionId: opts.resumeSessionId });
+    runs.push({
+      prompt: opts.prompt,
+      cwd: opts.cwd,
+      resumeSessionId: opts.resumeSessionId,
+      env: opts.env,
+    });
     opts.onThought("thinking");
     return { sessionId: "g-1", text: completeText(), exitCode: 0, pid: 4242 };
   };
@@ -121,7 +127,12 @@ test("second created while running queues then resumes", async () => {
     releaseFirst = r;
   });
   setGrok(async (opts) => {
-    runs.push({ prompt: opts.prompt, cwd: opts.cwd, resumeSessionId: opts.resumeSessionId });
+    runs.push({
+      prompt: opts.prompt,
+      cwd: opts.cwd,
+      resumeSessionId: opts.resumeSessionId,
+      env: opts.env,
+    });
     if (runs.length === 1) await firstGate;
     return { sessionId: "g-1", text: completeText(), exitCode: 0, pid: 1 };
   });
@@ -186,7 +197,12 @@ test("second issue waits in fifo then starts", async () => {
     releaseFirst = r;
   });
   setGrok(async (opts) => {
-    runs.push({ prompt: opts.prompt, cwd: opts.cwd, resumeSessionId: opts.resumeSessionId });
+    runs.push({
+      prompt: opts.prompt,
+      cwd: opts.cwd,
+      resumeSessionId: opts.resumeSessionId,
+      env: opts.env,
+    });
     if (opts.cwd.endsWith("JHJ-1") && runs.filter((r) => r.cwd.endsWith("JHJ-1")).length === 1) {
       await firstGate;
     }
@@ -227,6 +243,33 @@ test("grok exit 0 without marker is error", async () => {
   await result.running;
   assert.equal(store.getByIssueId("iss-1")?.status, "error");
   assert.ok(errors.length > 0);
+});
+
+test("loadIssue snapshot and Grok-app helper env are passed to grok", async () => {
+  const { ctx, runs } = setup();
+  const result = await handleWebhook({
+    ...ctx,
+    exists: () => false,
+    eventId: "snap-1",
+    body: createdBody(),
+    token: "tok-grok",
+    loadIssue: async () => ({
+      id: "iss-1",
+      identifier: "JHJ-1",
+      title: "로그인 수정",
+      description: "비밀번호 리셋",
+      state: "Todo",
+      comments: "### Jane\nhi",
+    }),
+  });
+  await result.running;
+  assert.match(runs[0].prompt, /비밀번호 리셋/);
+  assert.match(runs[0].prompt, /로그인 수정/);
+  assert.match(runs[0].prompt, /### Jane/);
+  assert.match(runs[0].prompt, /linear-as-grok/);
+  assert.equal(runs[0].env?.LINEAR_GROK_TOKEN, "tok-grok");
+  assert.equal(runs[0].env?.LINEAR_ISSUE_ID, "iss-1");
+  assert.match(runs[0].env?.LINEAR_GROK_HELPER ?? "", /linear-as-grok/);
 });
 
 test("duplicate eventId does not run grok", async () => {

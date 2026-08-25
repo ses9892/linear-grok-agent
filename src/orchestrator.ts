@@ -1,6 +1,9 @@
+import { join } from "node:path";
 import { decide } from "./dispatch.ts";
-import { parseAgentSessionEvent } from "./event.ts";
+import { assembleIssueContext, parseAgentSessionEvent } from "./event.ts";
 import { buildIssuePrompt } from "./grok.ts";
+import { downloadLinearImages } from "./images.ts";
+import type { IssueSnapshot } from "./linear.ts";
 import { parseAgentMarker } from "./marker.ts";
 import type { GrokPort, LinearPort } from "./ports.ts";
 import type { Store } from "./store.ts";
@@ -20,7 +23,11 @@ export type HandleWebhookOpts = {
   lockWorktree: (worktreePath: string) => () => void;
   eventId: string;
   body: unknown;
+  token?: string;
+  loadIssue?: (issueId: string) => Promise<IssueSnapshot>;
 };
+
+const webhookContextByIssue = new Map<string, string>();
 
 export async function handleWebhook(
   opts: HandleWebhookOpts,
@@ -33,6 +40,7 @@ export async function handleWebhook(
   if (!event) {
     return { httpNote: "ignored" };
   }
+  webhookContextByIssue.set(event.issueId, event.promptContext);
 
   const existing = store.getByIssueId(event.issueId);
   await linear.thought(
@@ -57,7 +65,10 @@ export async function handleWebhook(
       pid: null,
       updatedAt: now,
     });
-    store.appendQueuedPrompt(event.issueId, event.userText || event.promptContext);
+    store.appendQueuedPrompt(
+      event.issueId,
+      opts.loadIssue ? event.userText || "start" : event.userText || event.promptContext,
+    );
   } else if (decision.kind === "queuePrompt") {
     store.appendQueuedPrompt(event.issueId, decision.text);
     return { httpNote: "ok" };
@@ -82,23 +93,36 @@ export async function handleWebhook(
     return { httpNote: "ok" };
   }
 
-  const running = runLoop(opts, event.issueId);
+  const running = runLoop(opts, event.issueId, event.promptContext);
   return { httpNote: "ok", running };
 }
 
-async function runLoop(opts: HandleWebhookOpts, issueId: string): Promise<void> {
+async function runLoop(
+  opts: HandleWebhookOpts,
+  issueId: string,
+  fallbackContext: string,
+): Promise<void> {
   try {
-    await runOneIssue(opts, issueId);
+    await runOneIssue(opts, issueId, fallbackContext);
   } finally {
     opts.slot.release(issueId);
     const next = opts.slot.dequeue();
     if (next && opts.slot.tryAcquire(next)) {
-      await runLoop(opts, next);
+      const nextRec = opts.store.getByIssueId(next);
+      await runLoop(opts, next, nextRec?.queuedPrompt ?? fallbackContext);
     }
   }
 }
 
-async function runOneIssue(opts: HandleWebhookOpts, issueId: string): Promise<void> {
+function helperBin(agentRoot: string): string {
+  return join(agentRoot, "bin/linear-as-grok");
+}
+
+async function runOneIssue(
+  opts: HandleWebhookOpts,
+  issueId: string,
+  fallbackContext: string,
+): Promise<void> {
   const { store, linear, grok, agentRoot, repoPath, git, exists, lockWorktree } = opts;
   while (true) {
     const record = store.getByIssueId(issueId);
@@ -120,24 +144,74 @@ async function runOneIssue(opts: HandleWebhookOpts, issueId: string): Promise<vo
     });
     const unlock = lockWorktree(wt.worktreePath);
     try {
-      const prompt = store.takeQueuedPrompt(issueId);
+      const queued = store.takeQueuedPrompt(issueId);
       const latest = store.getByIssueId(issueId)!;
+      const webhookFallback = webhookContextByIssue.get(issueId) || fallbackContext;
+      let promptContext = webhookFallback || queued;
+      let userText = "";
+      const helperPath = helperBin(opts.agentRoot);
+      if (opts.loadIssue) {
+        try {
+          const snap = await opts.loadIssue(issueId);
+          promptContext = assembleIssueContext({
+            identifier: snap.identifier,
+            title: snap.title,
+            description: snap.description,
+            state: snap.state,
+            comments: snap.comments,
+          });
+          userText = !queued || queued === "start" ? "" : queued;
+        } catch (err) {
+          console.error("loadIssue failed", err);
+          promptContext = webhookFallback || (queued === "start" ? "" : queued);
+          userText = queued && queued !== "start" && queued !== webhookFallback ? queued : "";
+        }
+      } else {
+        userText = queued && queued !== webhookFallback && queued !== "start" ? queued : "";
+        if (!promptContext) promptContext = queued;
+      }
+      if (opts.token && promptContext) {
+        try {
+          const imaged = await downloadLinearImages({
+            markdown: promptContext,
+            destDir: join(opts.agentRoot, "issue-images", latest.issueIdentifier),
+            token: opts.token,
+          });
+          promptContext = imaged.markdown;
+          if (imaged.files.length > 0) {
+            promptContext += `\n\n## Local screenshots\n${imaged.files.map((f) => `- ${f}`).join("\n")}`;
+          }
+        } catch (err) {
+          console.error("downloadLinearImages failed", err);
+        }
+      }
       const thoughts = createThoughtBuffer({
         emit: (text) => {
           void linear.thought(latest.linearAgentSessionId, text);
         },
       });
       const result = await grok.run({
-        prompt: buildIssuePrompt({ promptContext: prompt, userText: "" }),
+        prompt: buildIssuePrompt({
+          promptContext,
+          userText,
+          helperPath,
+        }),
         cwd: wt.worktreePath,
         resumeSessionId: latest.grokSessionId ?? undefined,
         onThought: (text) => {
           thoughts.push(text);
         },
-        onAction: (title) => {
+        onAction: (title, parameter) => {
           thoughts.flush();
-          void linear.action(latest.linearAgentSessionId, title, "");
+          void linear.action(latest.linearAgentSessionId, title, parameter);
         },
+        env: opts.token
+          ? {
+              LINEAR_GROK_TOKEN: opts.token,
+              LINEAR_ISSUE_ID: issueId,
+              LINEAR_GROK_HELPER: helperPath,
+            }
+          : undefined,
       });
       thoughts.flush();
       const after = store.getByIssueId(issueId)!;

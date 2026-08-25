@@ -3,6 +3,7 @@ config.toml
 token.json
 state.sqlite
 worktrees/
+issue-images/
 agent.log
 *.log
 .DS_Store

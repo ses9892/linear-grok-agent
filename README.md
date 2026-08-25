@@ -227,7 +227,10 @@ Cloudflare Tunnel은 Linear(클라우드)가 맥(`localhost`)을 찾아오게 �
 - 동시에 `running` 이슈 1개. 나머지는 FIFO
 - 질문이면 Linear elicitation 후 대기. 같은 이슈 답장/`@Grok`으로 `--resume`
 - 완료 후 다시 `@Grok`이면 같은 브랜치에서 후속
-- Linear 댓글은 래퍼가 Grok 앱 토큰으로 올림. Grok CLI의 Linear MCP는 차단
+- 시작 시 Linear GraphQL로 이슈 제목/본문/상태/댓글을 읽어 프롬프트에 넣음. 웹훅 `promptContext`가 비어도 본문으로 작업함
+- `uploads.linear.app` 이미지는 에이전트 `issue-images/<이슈>/`에 받아 절대 경로로 프롬프트에 넣음 (worktree에 넣지 않음)
+- Linear 쓰기는 Grok 앱 토큰 헬퍼 `bin/linear-as-grok` (댓글/설명/제목/상태). Grok CLI의 Linear MCP는 `--deny` — MCP는 사람 계정으로 쓰기 때문
+- Linear 세션 action에 도구 경로/커맨드 파라미터를 같이 올림
 - thought는 단어 단위가 아니라 문장/버퍼로 모아서 올림
 
 ## 테스트
@@ -245,6 +248,7 @@ git에 올리지 않는 것:
 - `token.json`
 - `state.sqlite`
 - `worktrees/`
+- `issue-images/`
 - `~/.cloudflared/cert.pem`
 - `~/.cloudflared/<터널-UUID>.json`
 
@@ -254,7 +258,8 @@ git에 올리지 않는 것:
 |------|--------|
 | 위임했는데 아무 반응이 없음 | `start.sh`가 떠 있는지, Linear Webhook URL이 `https://grokbot.win/webhook` 인지, Agent session events 가 켜져 있는지 |
 | `grokbot.win/health` 실패 | 맥에서 `cloudflared tunnel run` + `npm start`가 살아 있는지 |
-| 댓글이 내 계정 `via MCP` | 예전 바이너리. 최신 `start.sh`로 재시작 |
+| 댓글이 내 계정 `via MCP` | 예전 바이너리. 최신 `start.sh`로 재시작. Grok은 `bin/linear-as-grok`로만 Linear를 써야 함 |
+| 이슈 본문/스크린샷을 모름 | 최신 코드(이슈 스냅샷 + 이미지 다운로드)로 재시작 |
 | thought가 단어마다 끊김 | 최신 코드(thought buffer)로 재시작 |
 | PR이 GitHub 개인 저장소로 감 | 아님. `repo_path`의 `git remote`로 감 |
 | 컴퓨터를 끄면 | 주소는 유지되지만 수신이 안 됨. 다시 `start.sh` |

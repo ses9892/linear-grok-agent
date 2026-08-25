@@ -13,6 +13,7 @@ export type GrokPort = {
     cwd: string;
     resumeSessionId?: string;
     onThought(text: string): void;
-    onAction(title: string): void;
+    onAction(title: string, parameter: string): void;
+    env?: Record<string, string>;
   }): Promise<{ sessionId: string | null; text: string; exitCode: number; pid: number }>;
 };

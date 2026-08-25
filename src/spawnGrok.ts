@@ -14,6 +14,7 @@ export function createGrokPort(): GrokPort {
       const child = spawn(argv[0], argv.slice(1), {
         cwd: opts.cwd,
         stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, ...opts.env },
       });
       const pid = child.pid ?? 0;
       const lines: string[] = [];

@@ -46,6 +46,30 @@ test("parseAgentSessionEvent returns null when incomplete", () => {
   assert.equal(parseAgentSessionEvent({ type: "Issue" }, "x"), null);
 });
 
+test("parseAgentSessionEvent assembles title and description when promptContext missing", () => {
+  const event = parseAgentSessionEvent(
+    {
+      type: "AgentSessionEvent",
+      action: "created",
+      agentSession: {
+        id: "ses-1",
+        issue: {
+          id: "iss-1",
+          identifier: "JHJ-66",
+          title: "상세 이후 방향성",
+          description: "뒤로가기 버튼을 고친다",
+          state: { name: "Backlog" },
+        },
+      },
+    },
+    "deliv-3",
+  );
+  assert.match(event?.promptContext ?? "", /JHJ-66/);
+  assert.match(event?.promptContext ?? "", /상세 이후 방향성/);
+  assert.match(event?.promptContext ?? "", /뒤로가기/);
+  assert.match(event?.promptContext ?? "", /Backlog/);
+});
+
 function rec(over: Partial<IssueRecord> = {}): IssueRecord {
   return {
     issueId: "iss-1",

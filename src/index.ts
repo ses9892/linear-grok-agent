@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { createGrokPort } from "./spawnGrok.ts";
-import { createLinearPort, exchangeOAuthCode } from "./linear.ts";
+import { createLinearPort, exchangeOAuthCode, fetchIssueSnapshot } from "./linear.ts";
 import { handleWebhook } from "./orchestrator.ts";
 import { reclaimZombies } from "./reclaim.ts";
 import { createServer } from "./server.ts";
@@ -79,6 +79,8 @@ async function main(): Promise<void> {
         lockWorktree,
         eventId,
         body,
+        token,
+        loadIssue: (issueId) => fetchIssueSnapshot(token, issueId),
       });
       if (result.running) {
         await result.running;
