@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import type { LinearPort } from "./ports.ts";
 
 export async function graphql(
@@ -15,7 +16,8 @@ export async function graphql(
     body: JSON.stringify({ query, variables }),
   });
   if (!res.ok) {
-    throw new Error(`Linear GraphQL HTTP ${res.status}`);
+    const body = await res.text().catch(() => "");
+    throw new Error(`Linear GraphQL HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
   }
   const json = (await res.json()) as { data?: unknown; errors?: { message: string }[] };
   if (json.errors?.length) {
@@ -132,33 +134,133 @@ export function createLinearPort(token: string): LinearPort {
   };
 }
 
+export type LinearTokenFile = {
+  access_token: string;
+  refresh_token?: string;
+  expires_at?: number;
+};
+
+export function oauthAuthorizeUrl(clientId: string, publicBaseUrl: string): string {
+  const redirect = `${publicBaseUrl.replace(/\/$/, "")}/oauth/callback`;
+  const q = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: redirect,
+    scope: "read,write,app:assignable,app:mentionable",
+    actor: "app",
+    state: "install",
+  });
+  return `https://linear.app/oauth/authorize?${q.toString()}`;
+}
+
+export function tokenFromOAuthResponse(
+  json: {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  },
+  nowMs = Date.now(),
+): LinearTokenFile {
+  if (!json.access_token) {
+    throw new Error("Linear OAuth missing access_token");
+  }
+  const expiresIn = typeof json.expires_in === "number" ? json.expires_in : 0;
+  return {
+    access_token: json.access_token,
+    ...(json.refresh_token ? { refresh_token: json.refresh_token } : {}),
+    ...(expiresIn > 0 ? { expires_at: nowMs + expiresIn * 1000 } : {}),
+  };
+}
+
+async function writeTokenFile(tokenPath: string, token: LinearTokenFile): Promise<void> {
+  await writeFile(tokenPath, JSON.stringify(token), "utf8");
+}
+
+export async function readTokenFile(tokenPath: string): Promise<LinearTokenFile | null> {
+  if (!existsSync(tokenPath)) return null;
+  const raw = JSON.parse(await readFile(tokenPath, "utf8")) as LinearTokenFile;
+  if (!raw.access_token) return null;
+  return raw;
+}
+
+async function postOAuthToken(
+  body: URLSearchParams,
+  fetchImpl: typeof fetch,
+): Promise<LinearTokenFile> {
+  const res = await fetchImpl("https://api.linear.app/oauth/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Linear OAuth HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`);
+  }
+  return tokenFromOAuthResponse((await res.json()) as { access_token?: string; refresh_token?: string; expires_in?: number });
+}
+
 export async function exchangeOAuthCode(opts: {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
   code: string;
   tokenPath: string;
+  fetchImpl?: typeof fetch;
 }): Promise<string> {
-  const res = await fetch("https://api.linear.app/oauth/token", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
+  const fetchFn = opts.fetchImpl ?? fetch;
+  const token = await postOAuthToken(
+    new URLSearchParams({
       grant_type: "authorization_code",
       client_id: opts.clientId,
       client_secret: opts.clientSecret,
       redirect_uri: opts.redirectUri,
       code: opts.code,
     }),
-  });
-  if (!res.ok) {
-    throw new Error(`Linear OAuth HTTP ${res.status}`);
+    fetchFn,
+  );
+  await writeTokenFile(opts.tokenPath, token);
+  return token.access_token;
+}
+
+let refreshLock: Promise<string> | null = null;
+
+export async function loadValidAccessToken(opts: {
+  tokenPath: string;
+  clientId: string;
+  clientSecret: string;
+  nowMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<string> {
+  const now = opts.nowMs ?? Date.now();
+  const file = await readTokenFile(opts.tokenPath);
+  if (!file) {
+    throw new Error("token.json missing; complete Linear OAuth first");
   }
-  const json = (await res.json()) as { access_token?: string };
-  if (!json.access_token) {
-    throw new Error("Linear OAuth missing access_token");
+  const fresh = file.expires_at && now < file.expires_at - 60_000;
+  if (fresh || !file.refresh_token) {
+    return file.access_token;
   }
-  await writeFile(opts.tokenPath, JSON.stringify({ access_token: json.access_token }), "utf8");
-  return json.access_token;
+  if (!refreshLock) {
+    refreshLock = (async () => {
+      const next = await postOAuthToken(
+        new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: file.refresh_token!,
+          client_id: opts.clientId,
+          client_secret: opts.clientSecret,
+        }),
+        opts.fetchImpl ?? fetch,
+      );
+      if (!next.refresh_token && file.refresh_token) {
+        next.refresh_token = file.refresh_token;
+      }
+      await writeTokenFile(opts.tokenPath, next);
+      return next.access_token;
+    })().finally(() => {
+      refreshLock = null;
+    });
+  }
+  return refreshLock;
 }
 
 export async function commentOnIssue(token: string, issueId: string, body: string): Promise<void> {

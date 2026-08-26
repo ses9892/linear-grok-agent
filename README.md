@@ -153,7 +153,7 @@ public_base_url = "https://grokbot.win"
 https://linear.app/oauth/authorize?response_type=code&client_id=<Client-ID>&redirect_uri=https://grokbot.win/oauth/callback&scope=read,write,app:assignable,app:mentionable&actor=app&state=install
 ```
 
-Authorize 하면 `token.json`이 생깁니다.
+Authorize 하면 `token.json`이 생깁니다. access_token은 **24시간** 만료입니다. 수신기가 `refresh_token`으로 갱신합니다. 401이 나면 위 URL을 다시 열어 앱을 재설치하세요.
 
 앱 유저 id:
 
@@ -257,7 +257,8 @@ git에 올리지 않는 것:
 
 | 증상 | 볼 곳 |
 |------|--------|
-| 위임했는데 아무 반응이 없음 | `start.sh`가 떠 있는지, Linear Webhook URL이 `https://grokbot.win/webhook` 인지, Agent session events 가 켜져 있는지 |
+| 위임했는데 아무 반응이 없음 | `start.sh`가 떠 있는지, Linear Webhook URL이 `https://grokbot.win/webhook` 인지, Agent session events 가 켜져 있는지. `agent.log`에 GraphQL 401이면 OAuth를 다시 Authorize |
+| GraphQL 401 | access_token 24시간 만료. README의 authorize URL을 다시 열고 `token.json`이 refresh_token을 갖는지 확인 |
 | `grokbot.win/health` 실패 | 맥에서 `cloudflared tunnel run` + `npm start`가 살아 있는지 |
 | 댓글이 내 계정 `via MCP` | 예전 바이너리. 최신 `start.sh`로 재시작. Grok은 `bin/linear-as-grok`로만 Linear를 써야 함 |
 | 이슈 본문/스크린샷을 모름 | 최신 코드(이슈 스냅샷 + 이미지 다운로드)로 재시작 |

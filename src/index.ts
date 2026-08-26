@@ -3,7 +3,13 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { createGrokPort } from "./spawnGrok.ts";
-import { createLinearPort, exchangeOAuthCode, fetchIssueSnapshot } from "./linear.ts";
+import {
+  createLinearPort,
+  exchangeOAuthCode,
+  fetchIssueSnapshot,
+  loadValidAccessToken,
+  oauthAuthorizeUrl,
+} from "./linear.ts";
 import { handleWebhook, pumpSlots } from "./orchestrator.ts";
 import { reclaimZombies } from "./reclaim.ts";
 import { createServer } from "./server.ts";
@@ -60,14 +66,61 @@ async function main(): Promise<void> {
       });
     },
     onWebhook: async (eventId, _raw, body) => {
-      if (!existsSync(tokenPath)) {
-        console.error("token.json missing; complete OAuth first");
+      let token: string;
+      try {
+        token = await loadValidAccessToken({
+          tokenPath,
+          clientId: cfg.linearClientId,
+          clientSecret: cfg.linearClientSecret,
+        });
+      } catch (err) {
+        console.error("Linear token missing/expired. Re-authorize:", oauthAuthorizeUrl(cfg.linearClientId, cfg.publicBaseUrl));
+        console.error(err);
         return;
       }
-      const token = (JSON.parse(readFileSync(tokenPath, "utf8")) as { access_token: string })
-        .access_token;
       const linear = createLinearPort(token);
-      const result = await handleWebhook({
+      try {
+        const result = await handleWebhook({
+          store,
+          slot,
+          linear,
+          grok,
+          agentRoot: root,
+          repoPath: cfg.repoPath,
+          git,
+          exists: existsSync,
+          lockWorktree,
+          eventId,
+          body,
+          token,
+          loadIssue: (issueId) => fetchIssueSnapshot(token, issueId),
+        });
+        void result.running?.catch((err) => {
+          console.error("grok run failed", err);
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("401") || msg.includes("Authentication")) {
+          console.error("Linear GraphQL 401. Re-authorize:", oauthAuthorizeUrl(cfg.linearClientId, cfg.publicBaseUrl));
+        }
+        console.error("webhook handler failed", err);
+      }
+    },
+  });
+
+  if (existsSync(tokenPath)) {
+    try {
+      const token = await loadValidAccessToken({
+        tokenPath,
+        clientId: cfg.linearClientId,
+        clientSecret: cfg.linearClientSecret,
+      });
+      const linear = createLinearPort(token);
+      await reclaimZombies(store, linear, alive);
+      for (const rec of store.listByStatus("queued")) {
+        slot.enqueue(rec.issueId);
+      }
+      pumpSlots({
         store,
         slot,
         linear,
@@ -77,42 +130,18 @@ async function main(): Promise<void> {
         git,
         exists: existsSync,
         lockWorktree,
-        eventId,
-        body,
         token,
         loadIssue: (issueId) => fetchIssueSnapshot(token, issueId),
       });
-      void result.running?.catch((err) => {
-        console.error("grok run failed", err);
-      });
-    },
-  });
-
-  if (existsSync(tokenPath)) {
-    const token = (JSON.parse(readFileSync(tokenPath, "utf8")) as { access_token: string })
-      .access_token;
-    const linear = createLinearPort(token);
-    await reclaimZombies(store, linear, alive);
-    for (const rec of store.listByStatus("queued")) {
-      slot.enqueue(rec.issueId);
+    } catch (err) {
+      console.error("Linear token missing/expired. Re-authorize:", oauthAuthorizeUrl(cfg.linearClientId, cfg.publicBaseUrl));
+      console.error(err);
     }
-    pumpSlots({
-      store,
-      slot,
-      linear,
-      grok,
-      agentRoot: root,
-      repoPath: cfg.repoPath,
-      git,
-      exists: existsSync,
-      lockWorktree,
-      token,
-      loadIssue: (issueId) => fetchIssueSnapshot(token, issueId),
-    });
   }
 
   server.listen(cfg.bindPort, cfg.bindHost, () => {
     console.log(`linear-grok-agent listening on ${cfg.bindHost}:${cfg.bindPort}`);
+    console.log("OAuth:", oauthAuthorizeUrl(cfg.linearClientId, cfg.publicBaseUrl));
   });
 }
 
@@ -120,3 +149,4 @@ void main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
