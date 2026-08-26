@@ -11,6 +11,8 @@ https://grokbot.win/webhook
 https://grokbot.win/oauth/callback
 ```
 
+장애 의심(“훅이 안 된다”, Working에 남음, GraphQL 401)은 **[INCIDENTS.md](INCIDENTS.md)** 부터 본다.
+
 ## 사용자 입장에서 하는 일
 
 1. Linear 이슈를 Grok에 **위임**(delegate)하거나 `@Grok`을 멘션한다.
@@ -254,6 +256,8 @@ git에 올리지 않는 것:
 - `~/.cloudflared/<터널-UUID>.json`
 
 ## 문제 해결
+
+실제 장애 사례·로그 지문: [INCIDENTS.md](INCIDENTS.md).
 
 | 증상 | 볼 곳 |
 |------|--------|
